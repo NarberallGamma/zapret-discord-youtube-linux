@@ -17,7 +17,19 @@ backend_setup() {
 
     local oif_clause=""
     if [[ -n "$interface" && "$interface" != "any" ]]; then
-        oif_clause="oifname \"$interface\""
+        if [[ "$interface" == *","* ]]; then
+            local ifn ifnames=()
+            IFS=',' read -ra _zapret_ifs <<< "$interface"
+            for ifn in "${_zapret_ifs[@]}"; do
+                ifn="${ifn// /}"
+                [[ -n "$ifn" ]] && ifnames+=("\"$ifn\"")
+            done
+            if [[ ${#ifnames[@]} -gt 0 ]]; then
+                oif_clause="oifname { $(IFS=,; echo "${ifnames[*]}") }"
+            fi
+        else
+            oif_clause="oifname \"$interface\""
+        fi
     fi
 
     if elevate nft list tables 2>/dev/null | grep -q "$table"; then
@@ -28,6 +40,34 @@ backend_setup() {
 
     elevate nft add table "$table"
     elevate nft add chain "$table" "$chain" { type filter hook output priority 0\; }
+
+    # Virtual / VPN egress: one packet has one oif, Ethernet+Wi-Fi do not double-queue.
+    # Skip so docker/TUN/loopback are not desync'd (v2ray TUN = singbox_tun).
+    elevate nft add rule "$table" "$chain" \
+        oifname '{ "lo", "docker0", "throne-tun", "singbox_tun" }' return \
+        comment "\"Skip zapret for loopback, docker and VPN TUN\""
+    elevate nft add rule "$table" "$chain" oifname "veth*" return \
+        comment "\"Skip zapret for docker veth\""
+    elevate nft add rule "$table" "$chain" oifname "br-*" return \
+        comment "\"Skip zapret for docker bridges\""
+    elevate nft add rule "$table" "$chain" meta mark "${THRONE_VPN_MARK:-0x2023}" return \
+        comment "\"Skip zapret for Throne proxied traffic\""
+
+    # v2rayN / direct VPS TLS: bypass nfqueue by destination (ipset-exclude inside nfqws is not enough under load)
+    local exclude_file="${BASE_DIR:-}/${ZAPRET_VPS_EXCLUDE_FILE:-user-lists/ipset-exclude-user.txt}"
+    if [[ -f "$exclude_file" ]]; then
+        local vip vips=()
+        while IFS= read -r vip || [[ -n "$vip" ]]; do
+            vip="${vip%%#*}"
+            vip="${vip// /}"
+            [[ -z "$vip" ]] && continue
+            vips+=("$vip")
+        done < "$exclude_file"
+        if [[ ${#vips[@]} -gt 0 ]]; then
+            elevate nft add rule "$table" "$chain" ip daddr "{ $(IFS=,; echo "${vips[*]}") }" return \
+                comment "\"Skip zapret for VPS VPN endpoints\""
+        fi
+    fi
 
     if [[ -n "$tcp_ports" ]]; then
         elevate nft add rule "$table" "$chain" $oif_clause \

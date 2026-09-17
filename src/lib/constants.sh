@@ -21,6 +21,13 @@ NFT_QUEUE_NUM=220
 NFT_MARK="0x40000000"
 NFT_RULE_COMMENT="Added by zapret script"
 
+# Throne/sing-box (legacy): skip nfqueue for TUN/mark
+THRONE_VPN_MARK="0x2023"
+THRONE_TUN_IF="throne-tun"
+
+# VPS VPN nodes: skip nfqueue entirely (v2rayN direct TLS/Reality to Jump/main)
+ZAPRET_VPS_EXCLUDE_FILE="user-lists/ipset-exclude-user.txt"
+
 # iptables настройки
 IPT_CHAIN="output"
 IPT_TABLE="mangle"
